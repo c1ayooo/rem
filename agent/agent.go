@@ -453,6 +453,11 @@ func (agent *Agent) handlerInbound(local, remote *core.URL, control *message.Con
 	if local.Scheme == core.PortForwardServe || local.Scheme == core.RawServe {
 		options["src"] = local.Host
 		options["dest"] = remote.Host
+		// port://LISTEN/DEST 自包含形式：目的地址在 URL path 中携带，由对端拨号。
+		// path 优先于配对 URL 的 host（-l port://LISTEN -r DEST 配对形式 path 为空，不受影响）。
+		if dest := local.PathString(); dest != "" {
+			options["dest"] = dest
+		}
 	}
 
 	if local.Tunnel == core.MemoryTunnel {
@@ -480,6 +485,10 @@ func (agent *Agent) handlerOutbound(local, remote *core.URL, control *message.Co
 	case core.PortForwardServe, core.CobaltStrikeServe:
 		options["src"] = remote.Host
 		options["dest"] = local.Host
+		// 同 handlerInbound：port://LISTEN/DEST 自包含形式，path 携带的目的地址优先。
+		if dest := local.PathString(); dest != "" {
+			options["dest"] = dest
+		}
 	}
 
 	instant, err := core.OutboundCreate(local.Scheme, options, agent.client)

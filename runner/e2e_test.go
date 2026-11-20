@@ -1515,6 +1515,15 @@ func init() {
 			},
 		},
 		runner.CaseSpec{
+			Name:  "portforward_reverse",
+			Build: buildReversePortForwardFixture,
+			Scenarios: []runner.Scenario{
+				echoScenario("echo_smoke", "listen_addr", []byte("hello reverse portforward")),
+				tcpPayloadScenario("large_payload", "listen_addr", 128*1024),
+				concurrentConnScenario("concurrent_conns", "listen_addr", "rconn", 5),
+			},
+		},
+		runner.CaseSpec{
 			Name:  "raw_serve",
 			Build: buildRawServeFixture,
 			Scenarios: []runner.Scenario{
@@ -1781,6 +1790,46 @@ func buildPortForwardFixture(t *testing.T) runner.FixtureSpec {
 func buildPortForwardDomainFixture(t *testing.T) runner.FixtureSpec {
 	echoAddr := startLocalhostEchoServer(t)
 	return buildDirectServeFixture(t, "portforward_domain", "forward", asLocalhostAddr(t, echoAddr))
+}
+
+// buildReversePortForwardFixture 反向端口转发：-r port://LISTEN/DEST，
+// 对端（server 进程）开监听 LISTEN，流量回隧道后由本端（client 进程）拨 DEST。
+func buildReversePortForwardFixture(t *testing.T) runner.FixtureSpec {
+	serverPort := freePort(t)
+	listenPort := freePort(t)
+	serverAddr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", listenPort)
+	dest := startEchoServer(t)
+	alias := fmt.Sprintf("rev_portforward_%d", atomic.AddUint32(&testCounter, 1))
+
+	return runner.FixtureSpec{
+		HelperTest: e2eHelperTestPattern,
+		Vars: runner.Vars{
+			"server_port": fmt.Sprintf("%d", serverPort),
+			"server_addr": serverAddr,
+			"listen_port": fmt.Sprintf("%d", listenPort),
+			"listen_addr": listenAddr,
+			"dest":        dest,
+			"alias":       alias,
+		},
+		Processes: []runner.ProcessSpec{
+			{
+				Name:    "server",
+				Mode:    "console_run",
+				Command: "--debug -s tcp://0.0.0.0:{{server_port}}/?wrapper=raw -i 127.0.0.1 --no-sub",
+				Wait:    []runner.ReadySpec{{Kind: runner.ReadyTCPListen, Target: "{{server_addr}}", Timeout: 10 * time.Second}},
+			},
+			{
+				Name:    "client",
+				Mode:    "console_run",
+				Command: "-c tcp://{{server_addr}}/?wrapper=raw -r port://127.0.0.1:{{listen_port}}/{{dest}} -a {{alias}} --debug",
+				Wait: []runner.ReadySpec{
+					{Kind: runner.ReadyTCPListen, Target: "{{listen_addr}}", Timeout: 20 * time.Second},
+					{Kind: runner.ReadyDelayOnly, Timeout: 300 * time.Millisecond},
+				},
+			},
+		},
+	}
 }
 
 func buildRawServeFixture(t *testing.T) runner.FixtureSpec {
