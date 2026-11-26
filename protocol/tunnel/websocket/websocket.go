@@ -42,14 +42,26 @@ func (c *WebsocketDialer) Dial(dst string) (net.Conn, error) {
 	if v, ok := c.meta["tls"]; ok && v.(bool) {
 		scheme = "wss"
 	}
+	// A wss scheme is TLS even without ?tls. This dialer owns the TLS leg
+	// (below the HTTP upgrade), so the generic ?tls dialer hook -- which wraps
+	// the finished websocket conn -- must not be stacked on top of it.
+	if u.RawScheme == "wss" {
+		scheme = "wss"
+	}
 
 	conf, err := websocket.NewConfig(fmt.Sprintf("%s://%s/%s", scheme, u.Host, u.PathString()), "http://127.0.0.1")
 	if err != nil {
 		return nil, err
 	}
 
-	if tlsconf := c.meta["tlsConfig"]; tlsconf != nil {
-		conf.TlsConfig = tlsconf.(*tls.Config)
+	if tlsconf, ok := c.meta["tlsConfig"].(*tls.Config); ok && tlsconf != nil {
+		conf.TlsConfig = tlsconf
+	}
+	if scheme == "wss" && conf.TlsConfig == nil {
+		// Verify against the system roots. A public wss leg that skips
+		// verification is a plaintext connection with extra steps; private CAs
+		// are trusted through SSL_CERT_FILE, as usual for Go.
+		conf.TlsConfig = &tls.Config{ServerName: u.Hostname()}
 	}
 
 	rawConn, err := core.GetContextDialer(c.meta).DialContext(context.Background(), "tcp", u.Host)
