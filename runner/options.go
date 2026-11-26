@@ -60,6 +60,11 @@ type Options struct {
 	MainOptions   `group:"Main Options"`
 	MiscOptions   `group:"Miscellaneous Options"`
 	ConfigOptions `group:"Config Options"`
+
+	// Policy is the library-level ingress seam (runner/policy.go). The CLI
+	// parser never sets it: an embedder assigns it before Prepare and it rides
+	// into RunnerConfig through the embedded *Options.
+	Policy *Policy
 }
 
 var ErrHelpRequested = errors.New("help requested")

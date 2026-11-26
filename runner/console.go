@@ -413,9 +413,20 @@ func (c *Console) Accept() (*agent.Agent, error) {
 		cio.WriteMsg(conn, &message.Ack{Status: message.StatusFailed})
 		conn.Close()
 		return nil, fmt.Errorf("invalid token")
-	} else {
-		cio.WriteMsg(conn, &message.Ack{Status: message.StatusSuccess})
 	}
+	// Ingress policy gate (runner/policy.go): runs after the token check but
+	// before the success Ack, so a rejected login never sees a success
+	// handshake. This also covers half-channel and ConnHub logins, which all
+	// enter through Accept.
+	if c.Config.Policy != nil && c.Config.Policy.OnLogin != nil {
+		if err := c.Config.Policy.OnLogin(login); err != nil {
+			utils.Log.Errorf("[policy] login rejected: %v", err)
+			cio.WriteMsg(conn, &message.Ack{Status: message.StatusFailed})
+			conn.Close()
+			return nil, err
+		}
+	}
+	cio.WriteMsg(conn, &message.Ack{Status: message.StatusSuccess})
 
 	if login.ChannelRole != "" {
 		return c.handleConnHubAccept(conn, login)
@@ -435,8 +446,20 @@ func (c *Console) finishAccept(conn net.Conn, login *message.Login) (*agent.Agen
 		conn.Close()
 		return nil, err
 	}
-	cio.WriteMsg(conn, &message.Ack{Status: message.StatusSuccess})
 	control := controlMsg.(*message.Control)
+	// Second policy gate: the client dictates the serve topology through the
+	// Control (which side listens, which address the server dials). The
+	// embedder refuses it here, before the handshake completes and before any
+	// listener exists.
+	if c.Config.Policy != nil && c.Config.Policy.OnControl != nil {
+		if err := c.Config.Policy.OnControl(login, control.LocalURL(), control.RemoteURL(), control.InboundSide); err != nil {
+			utils.Log.Errorf("[policy] control rejected: %v", err)
+			cio.WriteMsg(conn, &message.Ack{Status: message.StatusFailed})
+			conn.Close()
+			return nil, err
+		}
+	}
+	cio.WriteMsg(conn, &message.Ack{Status: message.StatusSuccess})
 	if old, ok := agent.Agents.Get(login.Agent); ok {
 		if !c.owns(old) {
 			_ = conn.Close()
@@ -447,6 +470,10 @@ func (c *Console) finishAccept(conn net.Conn, login *message.Login) (*agent.Agen
 		agent.Agents.CompareAndDelete(old.ID, old)
 	}
 
+	var dialPolicy func(network, addr string) error
+	if c.Config.Policy != nil {
+		dialPolicy = c.Config.Policy.OnDial
+	}
 	server, err := agent.NewAgent(&agent.Config{
 		Alias:       login.Agent,
 		Type:        core.SERVER,
@@ -459,6 +486,7 @@ func (c *Console) finishAccept(conn net.Conn, login *message.Login) (*agent.Agen
 		Username:    login.Username,
 		Controller:  control,
 		LoadBalance: control.Options["lb"],
+		DialPolicy:  dialPolicy,
 		URLs: &core.URLs{
 			ConsoleURL: login.ConsoleURL(),
 			LocalURL:   control.LocalURL(),
