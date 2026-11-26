@@ -49,6 +49,12 @@ type Config struct {
 	Username    string
 	Hostname    string
 	Controller  *message.Control
+	// DialPolicy, when non-nil, is consulted before every outbound dial this
+	// agent performs (serve outbound legs, bridges): an error refuses that
+	// dial. It is the containment seam for server-side agents accepted from
+	// untrusted clients (runner.Policy.OnDial carries it here). Forked
+	// children inherit it through Clone and the parent's wrapped dialer.
+	DialPolicy func(network, addr string) error
 }
 
 func (c *Config) Clone(ctrl *message.Control) *Config {
@@ -68,6 +74,7 @@ func (c *Config) Clone(ctrl *message.Control) *Config {
 		Proxies:     c.Proxies,
 		Params:      c.Params,
 		Controller:  c.Controller,
+		DialPolicy:  c.DialPolicy,
 	}
 }
 
