@@ -471,22 +471,32 @@ func (c *Console) finishAccept(conn net.Conn, login *message.Login) (*agent.Agen
 	}
 
 	var dialPolicy func(network, addr string) error
+	var controlPolicy func(*message.Control) error
 	if c.Config.Policy != nil {
 		dialPolicy = c.Config.Policy.OnDial
+		if onControl := c.Config.Policy.OnControl; onControl != nil {
+			// The accept hook above only sees the initial control; forked
+			// extra serves reach the agent directly, so the same rule rides
+			// into the agent for every serve it will ever process.
+			controlPolicy = func(ctrl *message.Control) error {
+				return onControl(login, ctrl.LocalURL(), ctrl.RemoteURL(), ctrl.InboundSide)
+			}
+		}
 	}
 	server, err := agent.NewAgent(&agent.Config{
-		Alias:       login.Agent,
-		Type:        core.SERVER,
-		InboundSide: control.InboundSide,
-		Redirect:    control.Destination,
-		Via:         login.Via,
-		ExternalIP:  c.Config.IP,
-		Interfaces:  login.Interfaces,
-		Hostname:    login.Hostname,
-		Username:    login.Username,
-		Controller:  control,
-		LoadBalance: control.Options["lb"],
-		DialPolicy:  dialPolicy,
+		Alias:         login.Agent,
+		Type:          core.SERVER,
+		InboundSide:   control.InboundSide,
+		Redirect:      control.Destination,
+		Via:           login.Via,
+		ExternalIP:    c.Config.IP,
+		Interfaces:    login.Interfaces,
+		Hostname:      login.Hostname,
+		Username:      login.Username,
+		Controller:    control,
+		LoadBalance:   control.Options["lb"],
+		DialPolicy:    dialPolicy,
+		ControlPolicy: controlPolicy,
 		URLs: &core.URLs{
 			ConsoleURL: login.ConsoleURL(),
 			LocalURL:   control.LocalURL(),

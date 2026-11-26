@@ -55,6 +55,13 @@ type Config struct {
 	// untrusted clients (runner.Policy.OnDial carries it here). Forked
 	// children inherit it through Clone and the parent's wrapped dialer.
 	DialPolicy func(network, addr string) error
+	// ControlPolicy, when non-nil, is consulted for every serve Control this
+	// agent processes — including the controls of Forked extra serves, which
+	// never pass through the console's accept hook. An error refuses that
+	// serve and closes the forked child. The server side of an embedder sets
+	// it from runner.Policy.OnControl so a client cannot smuggle a listener
+	// or an outbound leg past the accept-time check by forking.
+	ControlPolicy func(control *message.Control) error
 }
 
 func (c *Config) Clone(ctrl *message.Control) *Config {
@@ -64,17 +71,18 @@ func (c *Config) Clone(ctrl *message.Control) *Config {
 			LocalURL:   ctrl.LocalURL(),
 			RemoteURL:  ctrl.RemoteURL(),
 		},
-		ExternalIP:  c.ExternalIP,
-		Alias:       ctrl.Source,
-		InboundSide: ctrl.InboundSide,
-		Redirect:    ctrl.Destination,
-		Type:        c.Type,
-		AuthKey:     c.AuthKey,
-		LoadBalance: c.LoadBalance,
-		Proxies:     c.Proxies,
-		Params:      c.Params,
-		Controller:  c.Controller,
-		DialPolicy:  c.DialPolicy,
+		ExternalIP:    c.ExternalIP,
+		Alias:         ctrl.Source,
+		InboundSide:   ctrl.InboundSide,
+		Redirect:      ctrl.Destination,
+		Type:          c.Type,
+		AuthKey:       c.AuthKey,
+		LoadBalance:   c.LoadBalance,
+		Proxies:       c.Proxies,
+		Params:        c.Params,
+		Controller:    c.Controller,
+		DialPolicy:    c.DialPolicy,
+		ControlPolicy: c.ControlPolicy,
 	}
 }
 

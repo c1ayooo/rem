@@ -502,6 +502,14 @@ func (agent *Agent) handlerOutbound(local, remote *core.URL, control *message.Co
 }
 
 func (agent *Agent) handlerControl(control *message.Control) error {
+	// Every serve Control enters here, including the ones Fork delivers for
+	// extra serves. The policy must see all of them: the console's accept hook
+	// only sees the initial control (agent/config.go ControlPolicy).
+	if agent.ControlPolicy != nil {
+		if err := agent.ControlPolicy(control); err != nil {
+			return err
+		}
+	}
 	if control.InboundSide == "" {
 		return nil // connect-only
 	}

@@ -264,4 +264,86 @@ func TestPolicyDialFenceFencesServerOutbound(t *testing.T) {
 	})
 }
 
-// Ensure the os import stays justified even if the helper changes.
+// Forked extra serves never pass through the console accept hook: they reach
+// the server-side agent as separate Control messages. The policy must cover
+// them too, or a client could smuggle a listener or an outbound leg past the
+// accept-time check by asking for a second serve.
+func TestPolicyControlFenceCoversForkedServes(t *testing.T) {
+	echo1, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo1.Close() //nolint:errcheck
+	echo2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo2.Close() //nolint:errcheck
+	serve := func(ln net.Listener) {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				io.Copy(c, c) //nolint:errcheck // echo
+				c.Close()     //nolint:errcheck
+			}(conn)
+		}
+	}
+	go serve(echo1)
+	go serve(echo2)
+
+	allowedDest := echo1.Addr().String()
+	listen1 := policyFreePort(t)
+	listen2 := policyFreePort(t)
+	var seen int
+	link, _ := startPolicyServer(t, &Policy{
+		OnControl: func(login *message.Login, local, remote *core.URL, inboundSide string) error {
+			seen++
+			if remote != nil && remote.Host == allowedDest {
+				return nil
+			}
+			return fmt.Errorf("serve %v is outside the policy", remote)
+		},
+	})
+
+	startPolicyClient(t, link, "policy-fork",
+		fmt.Sprintf("-l port://127.0.0.1:%d -l port://127.0.0.1:%d/127.0.0.1:%d -r raw://%s -r raw://%s",
+			listen1, listen2, listen2, allowedDest, echo2.Addr().String()))
+
+	echoRoundTrip := func(port int, timeout time.Duration) (bool, error) {
+		deadline := time.Now().Add(timeout)
+		var lastErr error
+		for time.Now().Before(deadline) {
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+			if err != nil {
+				lastErr = err
+				time.Sleep(150 * time.Millisecond)
+				continue
+			}
+			conn.SetDeadline(time.Now().Add(3 * time.Second))
+			_, _ = conn.Write([]byte("ping"))
+			buf := make([]byte, 4)
+			_, rerr := io.ReadFull(conn, buf)
+			_ = conn.Close()
+			if rerr != nil {
+				return false, rerr
+			}
+			return true, nil
+		}
+		return false, lastErr
+	}
+
+	// The first serve is allowed and works.
+	if ok, err := echoRoundTrip(listen1, 20*time.Second); !ok {
+		t.Fatalf("allowed serve did not echo: %v", err)
+	}
+	// The second (forked) serve is refused; the data path must not answer.
+	if ok, _ := echoRoundTrip(listen2, 10*time.Second); ok {
+		t.Fatal("the forked serve bypassed the policy and echoed")
+	}
+	if seen < 2 {
+		t.Fatalf("policy saw %d controls, want the main serve and the fork", seen)
+	}
+}
