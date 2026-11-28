@@ -1,3 +1,5 @@
+> **这是 4zrcin 的一部分。** 本仓是 [chainreactors/rem](https://github.com/chainreactors/rem) 的 fork，主线是 `feat/remote-nodes`（`master` 与它同步）：上游加纯新增，4zrcin 的远程节点经它回连控制台。七个仓怎么分工见 [4zrcin 的仓库地图](https://github.com/c1ayooo/4zrcin#仓库地图)。以下为上游的 README。
+
 # rem
 
 [![CI](https://github.com/chainreactors/rem-community/actions/workflows/test.yml/badge.svg)](https://github.com/chainreactors/rem-community/actions/workflows/test.yml)
